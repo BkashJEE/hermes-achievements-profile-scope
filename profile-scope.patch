@@ -1,0 +1,197 @@
+From 459621ad3051c0fdbe8ebab1e1cd0cacd2337e54 Mon Sep 17 00:00:00 2001
+From: Bikash Joshi <bkashjee@gmail.com>
+Date: Sun, 16 Aug 2026 00:39:16 -0700
+Subject: [PATCH] fix(achievements): identify profile scope in dashboard
+
+---
+ plugins/hermes-achievements/README.md         |  5 +++
+ .../dashboard/dist/index.js                   | 17 ++++++++--
+ .../dashboard/dist/style.css                  |  2 ++
+ .../dashboard/plugin_api.py                   | 27 ++++++++++++++++
+ tests/plugins/test_achievements_plugin.py     | 32 +++++++++++++++++++
+ 5 files changed, 80 insertions(+), 3 deletions(-)
+
+diff --git a/plugins/hermes-achievements/README.md b/plugins/hermes-achievements/README.md
+index 2c1ed63828..437164a8bd 100644
+--- a/plugins/hermes-achievements/README.md
++++ b/plugins/hermes-achievements/README.md
+@@ -135,6 +135,11 @@ POST /rescan
+ POST /reset-state
+ ```
+ 
++`GET /achievements` includes a display-safe `profile_scope` object. The
++dashboard uses it for the info tooltip beside **Unlocked**, so the total is
++clearly attributed to the selected Hermes profile without exposing a local
++filesystem path.
++
+ ## Development
+ 
+ Run checks:
+diff --git a/plugins/hermes-achievements/dashboard/dist/index.js b/plugins/hermes-achievements/dashboard/dist/index.js
+index 5be8a3f1dd..a9c294ee50 100644
+--- a/plugins/hermes-achievements/dashboard/dist/index.js
++++ b/plugins/hermes-achievements/dashboard/dist/index.js
+@@ -387,9 +387,18 @@
+   }
+ 
+   function StatCard(props) {
+-    return React.createElement(C.Card, { className: "ha-stat" },
++    return React.createElement(C.Card, { className: "ha-stat", title: props.title },
+       React.createElement(C.CardContent, { className: "ha-stat-content" },
+-        React.createElement("div", { className: "ha-stat-label" }, props.label),
++        React.createElement("div", { className: "ha-stat-label" },
++          props.label,
++          props.title && React.createElement("span", {
++            className: "ha-stat-scope-info",
++            title: props.title,
++            role: "img",
++            "aria-label": props.title,
++            tabIndex: 0,
++          }, "ⓘ")
++        ),
+         React.createElement("div", { className: "ha-stat-value" }, props.value),
+         props.hint && React.createElement("div", { className: "ha-stat-hint" }, props.hint)
+       )
+@@ -610,6 +619,8 @@
+     const unlocked = achievements.filter(function (a) { return a.state === "unlocked"; });
+     const discovered = achievements.filter(function (a) { return a.state === "discovered"; });
+     const secret = achievements.filter(function (a) { return a.state === "secret"; });
++    const profileScope = (data && data.profile_scope) || {};
++    const scopeDetail = profileScope.detail || "Showing achievements for the current Hermes profile. Profiles are scanned separately.";
+     const latest = unlocked.slice().sort(function (a, b) { return (b.unlocked_at || 0) - (a.unlocked_at || 0); }).slice(0, 5);
+     const highest = ["Olympian", "Diamond", "Gold", "Silver", "Copper"].find(function (tier) { return unlocked.some(function (a) { return a.tier === tier; }); }) || tx(t, "stats.none_yet", "None yet");
+ 
+@@ -674,7 +685,7 @@
+       scanBanner,
+       error && React.createElement(C.Card, { className: "ha-error" }, React.createElement(C.CardContent, null, String(error))),
+       React.createElement("div", { className: "ha-stats" },
+-        React.createElement(StatCard, { label: tx(t, "stats.unlocked", "Unlocked"), value: (data ? data.unlocked_count : 0) + " / " + (data ? data.total_count : 0), hint: tx(t, "stats.unlocked_hint", "earned badges") }),
++        React.createElement(StatCard, { label: tx(t, "stats.unlocked", "Unlocked"), value: (data ? data.unlocked_count : 0) + " / " + (data ? data.total_count : 0), hint: tx(t, "stats.unlocked_hint", "earned badges"), title: scopeDetail }),
+         React.createElement(StatCard, { label: tx(t, "stats.discovered", "Discovered"), value: discovered.length, hint: tx(t, "stats.discovered_hint", "known, not earned yet") }),
+         React.createElement(StatCard, { label: tx(t, "stats.secrets", "Secrets"), value: secret.length, hint: tx(t, "stats.secrets_hint", "hidden until first signal") }),
+         React.createElement(StatCard, { label: tx(t, "stats.highest_tier", "Highest tier"), value: highest, hint: tx(t, "stats.highest_tier_hint", "Copper → Silver → Gold → Diamond → Olympian") }),
+diff --git a/plugins/hermes-achievements/dashboard/dist/style.css b/plugins/hermes-achievements/dashboard/dist/style.css
+index 4353a1cb2f..0f49214ccc 100644
+--- a/plugins/hermes-achievements/dashboard/dist/style.css
++++ b/plugins/hermes-achievements/dashboard/dist/style.css
+@@ -13,6 +13,8 @@
+ .ha-stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .75rem; }
+ .ha-stat-content { padding: 1rem !important; }
+ .ha-stat-label { color: var(--color-muted-foreground); font-size: .75rem; text-transform: uppercase; letter-spacing: .12em; }
++.ha-stat-scope-info { display: inline-grid; place-items: center; width: 1rem; height: 1rem; margin-left: .3rem; border: 1px solid color-mix(in srgb, var(--color-muted-foreground) 55%, transparent); border-radius: 999px; color: var(--color-muted-foreground); cursor: help; font-size: .72rem; line-height: 1; text-transform: none; letter-spacing: normal; vertical-align: text-bottom; }
++.ha-stat-scope-info:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
+ .ha-stat-value { margin-top: .35rem; font-size: 1.4rem; font-weight: 750; letter-spacing: -0.035em; }
+ .ha-stat-hint { margin-top: .2rem; color: var(--color-muted-foreground); font-size: .75rem; }
+ .ha-toolbar { display: flex; justify-content: space-between; gap: .75rem; align-items: center; flex-wrap: wrap; }
+diff --git a/plugins/hermes-achievements/dashboard/plugin_api.py b/plugins/hermes-achievements/dashboard/plugin_api.py
+index c2f69a2299..b253e26858 100644
+--- a/plugins/hermes-achievements/dashboard/plugin_api.py
++++ b/plugins/hermes-achievements/dashboard/plugin_api.py
+@@ -154,6 +154,27 @@ def checkpoint_path() -> Path:
+     return get_hermes_home() / "plugins" / "hermes-achievements" / "scan_checkpoint.json"
+ 
+ 
++def profile_scope() -> Dict[str, str]:
++    """Describe the profile whose session store an achievement scan uses.
++
++    The dashboard intentionally scans the Hermes home selected for this
++    process/request. Named profiles live under ``<root>/profiles/<name>``;
++    every other home is the default profile. Return only a display-safe
++    profile identifier, never a local filesystem path.
++    """
++    home = get_hermes_home()
++    profile = home.name if home.parent.name == "profiles" else "default"
++    display_name = profile.replace("-", " ").replace("_", " ").title()
++    return {
++        "profile": profile,
++        "label": f"{display_name} profile",
++        "detail": (
++            f"Showing achievements earned from the {display_name} profile's "
++            "session history. Profiles are scanned separately."
++        ),
++    }
++
++
+ def load_state() -> Dict[str, Any]:
+     path = state_path()
+     if not path.exists():
+@@ -816,6 +837,7 @@ def _compute_from_scan(scan: Dict[str, Any], *, is_partial: bool = False) -> Dic
+         "achievements": evaluated,
+         "sessions": scan.get("sessions", []),
+         "aggregate": aggregate,
++        "profile_scope": profile_scope(),
+         "scan_meta": scan.get("scan_meta", {}),
+         "error": scan.get("error"),
+         "unlocked_count": len(unlocked),
+@@ -846,6 +868,7 @@ def _build_pending_snapshot(now: int) -> Dict[str, Any]:
+         "achievements": evaluated,
+         "sessions": [],
+         "aggregate": {},
++        "profile_scope": profile_scope(),
+         "scan_meta": {"mode": "pending", "sessions_total": 0, "sessions_rescanned": 0, "sessions_reused": 0},
+         "error": None,
+         "unlocked_count": 0,
+@@ -1000,6 +1023,10 @@ def evaluate_all(force: bool = False) -> Dict[str, Any]:
+ async def achievements():
+     data = evaluate_all()
+     payload = {k: data[k] for k in ["achievements", "unlocked_count", "discovered_count", "secret_count", "total_count", "error", "generated_at"] if k in data}
++    # Old persisted snapshots predate profile_scope. In that case the
++    # dashboard is still scoped to the current selected profile, so provide a
++    # safe fallback rather than omitting the explanation from the UI.
++    payload["profile_scope"] = data.get("profile_scope") or profile_scope()
+     payload["is_stale"] = _is_snapshot_stale(data)
+     payload["scan_meta"] = {
+         **(data.get("scan_meta") or {}),
+diff --git a/tests/plugins/test_achievements_plugin.py b/tests/plugins/test_achievements_plugin.py
+index b0842dca60..396eb290e1 100644
+--- a/tests/plugins/test_achievements_plugin.py
++++ b/tests/plugins/test_achievements_plugin.py
+@@ -17,6 +17,7 @@ contract: the plugin scans ALL of your sessions, not the first 200.
+ """
+ from __future__ import annotations
+ 
++import asyncio
+ import importlib.util
+ import sys
+ import threading
+@@ -151,6 +152,37 @@ def test_scan_sessions_default_scans_all_history_not_first_200(plugin_api):
+     assert result["scan_meta"]["sessions_total"] == 500
+ 
+ 
++def test_achievements_response_identifies_the_scanned_profile(plugin_api, tmp_path, monkeypatch):
++    """The unlocked total must say which profile's history produced it.
++
++    Profile histories are intentionally separate. The dashboard response must
++    expose a display-safe source label so a user does not mistake a named
++    profile's achievement total for the default profile's total.
++    """
++    profile_home = tmp_path / "profiles" / "jarvis"
++    monkeypatch.setattr(plugin_api, "get_hermes_home", lambda: profile_home)
++    plugin_api.evaluate_all = lambda: {
++        "achievements": [],
++        "unlocked_count": 21,
++        "discovered_count": 39,
++        "secret_count": 0,
++        "total_count": 60,
++        "error": None,
++        "generated_at": 1,
++    }
++
++    payload = asyncio.run(plugin_api.achievements())
++
++    assert payload["profile_scope"] == {
++        "profile": "jarvis",
++        "label": "Jarvis profile",
++        "detail": (
++            "Showing achievements earned from the Jarvis profile's session "
++            "history. Profiles are scanned separately."
++        ),
++    }
++
++
+ def test_evaluate_all_first_run_returns_pending_and_starts_background_scan(plugin_api):
+     """First-ever evaluate_all with no cache returns a pending placeholder
+     immediately and kicks off a background scan thread. Cold scans on
+-- 
+2.55.0.windows.3
+
