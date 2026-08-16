@@ -1,18 +1,5 @@
-From 459621ad3051c0fdbe8ebab1e1cd0cacd2337e54 Mon Sep 17 00:00:00 2001
-From: Bikash Joshi <bkashjee@gmail.com>
-Date: Sun, 16 Aug 2026 00:39:16 -0700
-Subject: [PATCH] fix(achievements): identify profile scope in dashboard
-
----
- plugins/hermes-achievements/README.md         |  5 +++
- .../dashboard/dist/index.js                   | 17 ++++++++--
- .../dashboard/dist/style.css                  |  2 ++
- .../dashboard/plugin_api.py                   | 27 ++++++++++++++++
- tests/plugins/test_achievements_plugin.py     | 32 +++++++++++++++++++
- 5 files changed, 80 insertions(+), 3 deletions(-)
-
 diff --git a/plugins/hermes-achievements/README.md b/plugins/hermes-achievements/README.md
-index 2c1ed63828..437164a8bd 100644
+index 2c1ed638281bf3992d3565364e275ccd24caf72e..437164a8bd1f209fc9118b5b6390fe2dd99ec8e8 100644
 --- a/plugins/hermes-achievements/README.md
 +++ b/plugins/hermes-achievements/README.md
 @@ -135,6 +135,11 @@ POST /rescan
@@ -28,7 +15,7 @@ index 2c1ed63828..437164a8bd 100644
  
  Run checks:
 diff --git a/plugins/hermes-achievements/dashboard/dist/index.js b/plugins/hermes-achievements/dashboard/dist/index.js
-index 5be8a3f1dd..a9c294ee50 100644
+index 5be8a3f1dd1d9ebb66d7ae1f36472c531bf68a49..a9c294ee50f41551f7c70fca4ecfeb184ab64e75 100644
 --- a/plugins/hermes-achievements/dashboard/dist/index.js
 +++ b/plugins/hermes-achievements/dashboard/dist/index.js
 @@ -387,9 +387,18 @@
@@ -71,7 +58,7 @@ index 5be8a3f1dd..a9c294ee50 100644
          React.createElement(StatCard, { label: tx(t, "stats.secrets", "Secrets"), value: secret.length, hint: tx(t, "stats.secrets_hint", "hidden until first signal") }),
          React.createElement(StatCard, { label: tx(t, "stats.highest_tier", "Highest tier"), value: highest, hint: tx(t, "stats.highest_tier_hint", "Copper → Silver → Gold → Diamond → Olympian") }),
 diff --git a/plugins/hermes-achievements/dashboard/dist/style.css b/plugins/hermes-achievements/dashboard/dist/style.css
-index 4353a1cb2f..0f49214ccc 100644
+index 4353a1cb2f9e70cb604d4fbdfebfd138398cf0e9..0f49214ccc59f2976d0eb5aa3cab3ef65cad9599 100644
 --- a/plugins/hermes-achievements/dashboard/dist/style.css
 +++ b/plugins/hermes-achievements/dashboard/dist/style.css
 @@ -13,6 +13,8 @@
@@ -84,7 +71,7 @@ index 4353a1cb2f..0f49214ccc 100644
  .ha-stat-hint { margin-top: .2rem; color: var(--color-muted-foreground); font-size: .75rem; }
  .ha-toolbar { display: flex; justify-content: space-between; gap: .75rem; align-items: center; flex-wrap: wrap; }
 diff --git a/plugins/hermes-achievements/dashboard/plugin_api.py b/plugins/hermes-achievements/dashboard/plugin_api.py
-index c2f69a2299..b253e26858 100644
+index c2f69a22999bc0d341cd4ccd956a80b74c3b8a99..fc9ae5ac7fbfdbfc9a5f52e5bad03ee40c8e7040 100644
 --- a/plugins/hermes-achievements/dashboard/plugin_api.py
 +++ b/plugins/hermes-achievements/dashboard/plugin_api.py
 @@ -154,6 +154,27 @@ def checkpoint_path() -> Path:
@@ -135,15 +122,15 @@ index c2f69a2299..b253e26858 100644
  async def achievements():
      data = evaluate_all()
      payload = {k: data[k] for k in ["achievements", "unlocked_count", "discovered_count", "secret_count", "total_count", "error", "generated_at"] if k in data}
-+    # Old persisted snapshots predate profile_scope. In that case the
-+    # dashboard is still scoped to the current selected profile, so provide a
-+    # safe fallback rather than omitting the explanation from the UI.
-+    payload["profile_scope"] = data.get("profile_scope") or profile_scope()
++    # Always bind the response to the current selected profile. Profile clones
++    # and restored backups can carry an older snapshot, so trusting persisted
++    # scope metadata could label the current profile with the source's name.
++    payload["profile_scope"] = profile_scope()
      payload["is_stale"] = _is_snapshot_stale(data)
      payload["scan_meta"] = {
          **(data.get("scan_meta") or {}),
 diff --git a/tests/plugins/test_achievements_plugin.py b/tests/plugins/test_achievements_plugin.py
-index b0842dca60..396eb290e1 100644
+index b0842dca60832aa25e6cedc908c28cc5d5410802..684f8d0ee16b0ab7e3cc6c9721910f55340057fd 100644
 --- a/tests/plugins/test_achievements_plugin.py
 +++ b/tests/plugins/test_achievements_plugin.py
 @@ -17,6 +17,7 @@ contract: the plugin scans ALL of your sessions, not the first 200.
@@ -154,18 +141,28 @@ index b0842dca60..396eb290e1 100644
  import importlib.util
  import sys
  import threading
-@@ -151,6 +152,37 @@ def test_scan_sessions_default_scans_all_history_not_first_200(plugin_api):
+@@ -151,6 +152,74 @@ def test_scan_sessions_default_scans_all_history_not_first_200(plugin_api):
      assert result["scan_meta"]["sessions_total"] == 500
  
  
-+def test_achievements_response_identifies_the_scanned_profile(plugin_api, tmp_path, monkeypatch):
++@pytest.mark.parametrize(
++    ("profile", "display_name"),
++    [
++        ("jarvis", "Jarvis"),
++        ("research_bot", "Research Bot"),
++        ("agent-42", "Agent 42"),
++    ],
++)
++def test_achievements_response_identifies_any_selected_profile(
++    plugin_api, tmp_path, monkeypatch, profile, display_name
++):
 +    """The unlocked total must say which profile's history produced it.
 +
 +    Profile histories are intentionally separate. The dashboard response must
 +    expose a display-safe source label so a user does not mistake a named
 +    profile's achievement total for the default profile's total.
 +    """
-+    profile_home = tmp_path / "profiles" / "jarvis"
++    profile_home = tmp_path / "profiles" / profile
 +    monkeypatch.setattr(plugin_api, "get_hermes_home", lambda: profile_home)
 +    plugin_api.evaluate_all = lambda: {
 +        "achievements": [],
@@ -175,15 +172,42 @@ index b0842dca60..396eb290e1 100644
 +        "total_count": 60,
 +        "error": None,
 +        "generated_at": 1,
++        # A cloned profile can inherit a snapshot from its source. The API must
++        # bind attribution to the current selected profile instead.
++        "profile_scope": {"profile": "source-profile"},
 +    }
 +
 +    payload = asyncio.run(plugin_api.achievements())
 +
 +    assert payload["profile_scope"] == {
-+        "profile": "jarvis",
-+        "label": "Jarvis profile",
++        "profile": profile,
++        "label": f"{display_name} profile",
 +        "detail": (
-+            "Showing achievements earned from the Jarvis profile's session "
++            f"Showing achievements earned from the {display_name} profile's session "
++            "history. Profiles are scanned separately."
++        ),
++    }
++
++
++def test_achievements_response_identifies_default_profile(plugin_api, tmp_path, monkeypatch):
++    monkeypatch.setattr(plugin_api, "get_hermes_home", lambda: tmp_path / ".hermes")
++    plugin_api.evaluate_all = lambda: {
++        "achievements": [],
++        "unlocked_count": 0,
++        "discovered_count": 0,
++        "secret_count": 0,
++        "total_count": 60,
++        "error": None,
++        "generated_at": 1,
++    }
++
++    payload = asyncio.run(plugin_api.achievements())
++
++    assert payload["profile_scope"] == {
++        "profile": "default",
++        "label": "Default profile",
++        "detail": (
++            "Showing achievements earned from the Default profile's session "
 +            "history. Profiles are scanned separately."
 +        ),
 +    }
@@ -192,6 +216,3 @@ index b0842dca60..396eb290e1 100644
  def test_evaluate_all_first_run_returns_pending_and_starts_background_scan(plugin_api):
      """First-ever evaluate_all with no cache returns a pending placeholder
      immediately and kicks off a background scan thread. Cold scans on
--- 
-2.55.0.windows.3
-
