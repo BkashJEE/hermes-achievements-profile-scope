@@ -45,8 +45,8 @@ jobs:
       - name: Verify installed state
         run: python install.py --hermes-dir hermes-agent --check
 
-      - name: Install pytest for the focused integration test
-        run: python -m pip install pytest
+      - name: Install focused integration-test dependencies
+        run: python -m pip install pytest PyYAML==6.0.3
 
       - name: Run profile-scope integration tests
         run: python -m pytest hermes-agent/tests/plugins/test_achievements_plugin.py -q
