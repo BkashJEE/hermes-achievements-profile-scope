@@ -35,6 +35,10 @@ git diff origin/main...HEAD --check
 
 The patch was built against `NousResearch/hermes-agent` `main` at `2be183142c6dd9ac309b6db5b783af5e25c3be18`.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for patch scope, validation, and pull-request requirements. Security reports are covered by [SECURITY.md](SECURITY.md).
+
 ## License
 
 The patch changes files in Hermes Agent, which is MIT licensed. See [LICENSE](LICENSE).
